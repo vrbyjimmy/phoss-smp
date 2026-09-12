@@ -92,6 +92,9 @@ To implement a **custom backend**, follow the pattern of `phoss-smp-backend-xml`
 - **Redirect**: Pointer to another SMP for a specific document type.
 - **BusinessCard**: Extended participant info for the Peppol Directory.
 - **TransportProfile**: Supported transport protocols (e.g., `peppol-transport-as4-v2_0`).
+- **AccessPoint**: Optional, reusable combination of endpoint reference URL and certificate with a unique name. Using an Access Point is **opt-in per endpoint**: an endpoint either references an Access Point *or* carries URL and certificate directly — never both. There is no automatic migration of existing data; endpoints can be re-pointed to an Access Point on demand via "Use for matching endpoints" in the Access Point administration page (Service data > Endpoints > Access Points).
+
+In the REST API an endpoint references an Access Point by setting the endpoint reference to `accesspoint:<AccessPointName>` and omitting the certificate. Responses always contain the resolved URL and certificate, so REST clients are unaffected.
 
 Manager interfaces for all entities are in `phoss-smp-backend` under `com.helger.phoss.smp.domain.*`. Implementations live in the respective backend modules.
 

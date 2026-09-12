@@ -185,8 +185,8 @@ public final class SMPEndpointMicroTypeConverter implements IMicroTypeConverter 
    * Make an exported endpoint element self-contained by inlining the endpoint reference URL and the
    * certificate of the referenced Access Point and removing the Access Point reference. This is
    * required because Access Point IDs cannot be guaranteed to be unique across multiple
-   * installations. The resulting XML uses the format of SMP versions before v8.4.4 and is read back
-   * by the soft migration in {@link #convertToNative(IMicroElement, ISMPAccessPointManager)}.
+   * installations. The resulting XML contains the endpoint reference and the certificate directly,
+   * so that it can be imported into any SMP instance.
    *
    * @param aEndpointElement
    *        The endpoint element to modify. May not be <code>null</code>.
