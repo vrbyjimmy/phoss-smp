@@ -120,6 +120,11 @@ Three API variants are implemented in `phoss-smp-backend/src/main/java/com/helge
 | GET | `/businesscard/{ServiceGroupId}` | No | Get business card |
 | PUT | `/businesscard/{ServiceGroupId}` | Yes | Create/update business card |
 | DELETE | `/businesscard/{ServiceGroupId}` | Yes | Delete business card |
+| GET | `/accesspoint/list` | Yes (admin) | List all Access Points |
+| GET | `/accesspoint/name/{AccessPointName}` | Yes (admin) | Get a single Access Point |
+| PUT | `/accesspoint/name/{AccessPointName}` | Yes (admin) | Create/update an Access Point |
+| DELETE | `/accesspoint/name/{AccessPointName}` | Yes (admin) | Delete an Access Point (fails if still referenced) |
+| POST | `/accesspoint/name/{AccessPointName}/use-for-matching-endpoints` | Yes (admin) | Let all endpoints with matching data reference the Access Point |
 | GET | `/smp-status/` | No | Health/status JSON (disabled by default) |
 | GET | `/smp-ready` | No | Backend-aware readiness: HTTP 200 `{"ready":true}` / HTTP 503 `{"ready":false}` |
 

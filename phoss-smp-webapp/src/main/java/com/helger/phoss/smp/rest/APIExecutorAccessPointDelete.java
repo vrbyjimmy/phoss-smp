@@ -62,6 +62,6 @@ public final class APIExecutorAccessPointDelete extends AbstractSMPAPIExecutor
 
     new AccessPointServerAPI (aDataProvider).deleteAccessPoint (sAccessPointName, aCredentials);
 
-    aUnifiedResponse.createNoContent ();
+    aUnifiedResponse.createOk ();
   }
 }
