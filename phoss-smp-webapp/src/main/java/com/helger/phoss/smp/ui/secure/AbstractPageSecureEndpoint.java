@@ -919,7 +919,8 @@ public abstract class AbstractPageSecureEndpoint extends AbstractSMPWebPageForm 
       aForm.addFormGroup (new BootstrapFormGroup ().setLabel ("Access Point")
                                                    .setCtrl (new HCSMPAccessPointSelect (new RequestField (FIELD_ACCESS_POINT,
                                                                                                            aSelectedEndpoint != null ? aSelectedEndpoint.getAccessPointID ()
-                                                                                                                                     : null)))
+                                                                                                                                     : null),
+                                                                                         aWPEC.getRequestScope ()))
                                                    .setHelpText ("Optionally reference an existing Access Point instead of providing " +
                                                                  "the Endpoint Reference and the certificate below. An Endpoint either " +
                                                                  "references an Access Point or it contains the data directly - but never both. " +

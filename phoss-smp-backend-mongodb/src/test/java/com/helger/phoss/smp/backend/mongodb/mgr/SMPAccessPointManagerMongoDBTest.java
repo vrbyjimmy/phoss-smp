@@ -29,10 +29,12 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestRule;
 
+import com.helger.collection.commons.ICommonsList;
+import com.helger.collection.paging.PagingSpec;
+import com.helger.phoss.smp.backend.mongodb.SMPServerMongoDBTestRule;
 import com.helger.phoss.smp.domain.SMPMetaManager;
 import com.helger.phoss.smp.domain.accesspoint.ISMPAccessPoint;
 import com.helger.phoss.smp.domain.accesspoint.ISMPAccessPointManager;
-import com.helger.phoss.smp.backend.mongodb.SMPServerMongoDBTestRule;
 import com.helger.phoss.smp.security.SMPCertificateHelper;
 
 /**
@@ -161,5 +163,47 @@ public final class SMPAccessPointManagerMongoDBTest
     // Bulk certificate change of the Access Points
     assertEquals (1, m_aAPMgr.updateAllAccessPointCertificates (SMPCertificateHelper.getNormalizedCert (CERT2), CERT1));
     assertEquals (CERT1, m_aAPMgr.getAccessPointOfID (aAP.getID ()).getCertificate ());
+  }
+
+  @Test
+  public void testPaging ()
+  {
+    for (int i = 1; i <= 5; ++i)
+      assertNotNull (m_aAPMgr.createAccessPoint ("paging-ap-" + i, "http://localhost/paging/" + i, "cert-" + i));
+    assertEquals (5, m_aAPMgr.getAccessPointCount ());
+
+    final ICommonsList <ISMPAccessPoint> aPage1 = m_aAPMgr.getAllAccessPoints (new PagingSpec (0, 2), null);
+    assertEquals (2, aPage1.size ());
+    assertEquals ("paging-ap-1", aPage1.get (0).getName ());
+    assertEquals ("paging-ap-2", aPage1.get (1).getName ());
+
+    final ICommonsList <ISMPAccessPoint> aPage2 = m_aAPMgr.getAllAccessPoints (new PagingSpec (2, 2), null);
+    assertEquals (2, aPage2.size ());
+    assertEquals ("paging-ap-3", aPage2.get (0).getName ());
+    assertEquals ("paging-ap-4", aPage2.get (1).getName ());
+
+    final ICommonsList <ISMPAccessPoint> aPage3 = m_aAPMgr.getAllAccessPoints (new PagingSpec (4, 2), null);
+    assertEquals (1, aPage3.size ());
+    assertEquals ("paging-ap-5", aPage3.get (0).getName ());
+  }
+
+  @Test
+  public void testSearchText ()
+  {
+    assertNotNull (m_aAPMgr.createAccessPoint ("search-alpha", "http://localhost/ap/a", CERT1));
+    assertNotNull (m_aAPMgr.createAccessPoint ("search-beta", "http://localhost/ap/needle", CERT1));
+    assertNotNull (m_aAPMgr.createAccessPoint ("needle-gamma", "http://localhost/ap/c", CERT1));
+    assertNotNull (m_aAPMgr.createAccessPoint ("search-delta", "http://localhost/ap/d", CERT1));
+
+    assertEquals (2, m_aAPMgr.getAccessPointCount ("needle"));
+
+    final ICommonsList <ISMPAccessPoint> aAll = m_aAPMgr.getAllAccessPoints (new PagingSpec (0, 10), "needle");
+    assertEquals (2, aAll.size ());
+    assertEquals ("needle-gamma", aAll.get (0).getName ());
+    assertEquals ("search-beta", aAll.get (1).getName ());
+
+    final ICommonsList <ISMPAccessPoint> aPaged = m_aAPMgr.getAllAccessPoints (new PagingSpec (1, 1), "needle");
+    assertEquals (1, aPaged.size ());
+    assertEquals ("search-beta", aPaged.get (0).getName ());
   }
 }

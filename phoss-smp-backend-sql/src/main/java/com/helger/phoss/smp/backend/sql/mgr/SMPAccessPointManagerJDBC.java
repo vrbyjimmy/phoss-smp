@@ -31,12 +31,16 @@ import com.helger.base.string.StringHelper;
 import com.helger.base.wrapper.Wrapper;
 import com.helger.collection.commons.CommonsArrayList;
 import com.helger.collection.commons.ICommonsList;
+import com.helger.collection.paging.IPagingSpec;
 import com.helger.db.api.helper.DBValueHelper;
 import com.helger.db.jdbc.callback.ConstantPreparedStatementDataProvider;
 import com.helger.db.jdbc.executor.DBExecutor;
 import com.helger.db.jdbc.executor.DBResultRow;
 import com.helger.db.jdbc.mgr.AbstractJDBCEnabledManager;
+import com.helger.phoss.smp.backend.sql.SMPJDBCQueryHelper;
+import com.helger.phoss.smp.backend.sql.SMPJDBCQueryHelper.SearchCondition;
 import com.helger.phoss.smp.CSMPServer;
+import com.helger.phoss.smp.domain.accesspoint.ESMPAccessPointColumn;
 import com.helger.phoss.smp.domain.accesspoint.ISMPAccessPoint;
 import com.helger.phoss.smp.domain.accesspoint.ISMPAccessPointManager;
 import com.helger.phoss.smp.domain.accesspoint.SMPAccessPoint;
@@ -51,6 +55,8 @@ import com.helger.photon.audit.AuditHelper;
  */
 public final class SMPAccessPointManagerJDBC extends AbstractJDBCEnabledManager implements ISMPAccessPointManager
 {
+  private static final ESMPAccessPointColumn [] COLUMNS = ESMPAccessPointColumn.values ();
+
   private final String m_sTableName;
 
   /**
@@ -231,9 +237,43 @@ public final class SMPAccessPointManagerJDBC extends AbstractJDBCEnabledManager 
   @ReturnsMutableCopy
   public ICommonsList <ISMPAccessPoint> getAllAccessPoints ()
   {
+    return _getAllAccessPoints (null);
+  }
+
+  @NonNull
+  @ReturnsMutableCopy
+  @Override
+  public ICommonsList <ISMPAccessPoint> getAllAccessPoints (@NonNull final IPagingSpec aPagingSpec,
+                                                            @Nullable final String sSearchText)
+  {
+    if (aPagingSpec.isEmptyPage ())
+      return new CommonsArrayList <> ();
+
+    final SearchCondition aSearch = SMPJDBCQueryHelper.createSearchCondition (COLUMNS, sSearchText);
+    return _getAllAccessPoints ((aSearch.isEmpty () ? "" : " WHERE " + aSearch.getSQL ()) +
+                                SMPJDBCQueryHelper.getOrderByAndPagingClause (COLUMNS, aPagingSpec),
+                                aSearch.getAllParams ());
+  }
+
+  @NonNull
+  @ReturnsMutableCopy
+  private ICommonsList <ISMPAccessPoint> _getAllAccessPoints (@Nullable final String sSuffix)
+  {
+    return _getAllAccessPoints (sSuffix, null);
+  }
+
+  @NonNull
+  @ReturnsMutableCopy
+  private ICommonsList <ISMPAccessPoint> _getAllAccessPoints (@Nullable final String sSuffix,
+                                                              @Nullable final ICommonsList <Object> aParams)
+  {
+    final String sSQL = "SELECT id, name, endpointReference, certificate FROM " +
+                        m_sTableName +
+                        (sSuffix == null ? "" : sSuffix);
+    final ICommonsList <DBResultRow> aDBResult = aParams == null || aParams.isEmpty () ? newExecutor ().queryAll (sSQL)
+                                                                                       : newExecutor ().queryAll (sSQL,
+                                                                                                                  new ConstantPreparedStatementDataProvider (aParams));
     final ICommonsList <ISMPAccessPoint> ret = new CommonsArrayList <> ();
-    final ICommonsList <DBResultRow> aDBResult = newExecutor ().queryAll ("SELECT id, name, endpointReference, certificate FROM " +
-                                                                          m_sTableName);
     if (aDBResult != null)
       for (final DBResultRow aRow : aDBResult)
         ret.add (_toDomain (aRow));
@@ -244,6 +284,17 @@ public final class SMPAccessPointManagerJDBC extends AbstractJDBCEnabledManager 
   public long getAccessPointCount ()
   {
     return newExecutor ().queryCount ("SELECT COUNT(*) FROM " + m_sTableName);
+  }
+
+  @Override
+  public long getAccessPointCount (@Nullable final String sSearchText)
+  {
+    final SearchCondition aSearch = SMPJDBCQueryHelper.createSearchCondition (COLUMNS, sSearchText);
+    if (aSearch.isEmpty ())
+      return getAccessPointCount ();
+
+    return newExecutor ().queryCount ("SELECT COUNT(*) FROM " + m_sTableName + " WHERE " + aSearch.getSQL (),
+                                      new ConstantPreparedStatementDataProvider (aSearch.getAllParams ()));
   }
 
   @NonNull

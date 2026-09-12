@@ -21,7 +21,10 @@ import com.helger.phoss.smp.domain.SMPMetaManager;
 import com.helger.phoss.smp.domain.accesspoint.ISMPAccessPoint;
 import com.helger.phoss.smp.domain.accesspoint.SMPAccessPointHelper;
 import com.helger.phoss.smp.domain.serviceinfo.SMPEndpoint;
+import com.helger.base.string.StringHelper;
 import com.helger.phoss.smp.exception.SMPBadRequestException;
+import com.helger.xml.microdom.IMicroElement;
+import com.helger.xml.microdom.MicroElement;
 
 /**
  * Helper class to handle the referencing of Access Points via the REST API.
@@ -41,8 +44,62 @@ import com.helger.phoss.smp.exception.SMPBadRequestException;
 @Immutable
 public final class SMPAccessPointRESTHelper
 {
+  /** The XML element name of a single Access Point */
+  public static final String ELEMENT_ACCESS_POINT = "accesspoint";
+  /** The XML element name of a list of Access Points */
+  public static final String ELEMENT_ACCESS_POINT_LIST = "accesspoints";
+  /** The XML element name of the Access Point name */
+  public static final String ELEMENT_NAME = "name";
+  /** The XML element name of the Access Point endpoint reference URL */
+  public static final String ELEMENT_ENDPOINT_REFERENCE = "endpointreference";
+  /** The XML element name of the Access Point certificate */
+  public static final String ELEMENT_CERTIFICATE = "certificate";
+  /** The XML attribute name of the number of contained Access Points */
+  public static final String ATTR_COUNT = "count";
+
   private SMPAccessPointRESTHelper ()
   {}
+
+  /**
+   * Convert the provided Access Point to its REST API XML representation. The internal ID of the
+   * Access Point is deliberately not part of the representation, because Access Points are
+   * referenced by name only.
+   *
+   * @param aAccessPoint
+   *        The Access Point to be converted. May not be <code>null</code>.
+   * @return The created micro element. Never <code>null</code>.
+   */
+  @NonNull
+  public static IMicroElement getAsMicroElement (@NonNull final ISMPAccessPoint aAccessPoint)
+  {
+    ValueEnforcer.notNull (aAccessPoint, "AccessPoint");
+
+    final IMicroElement ret = new MicroElement (ELEMENT_ACCESS_POINT);
+    ret.addElement (ELEMENT_NAME).addText (aAccessPoint.getName ());
+    if (aAccessPoint.hasEndpointReference ())
+      ret.addElement (ELEMENT_ENDPOINT_REFERENCE).addText (aAccessPoint.getEndpointReference ());
+    if (aAccessPoint.hasCertificate ())
+      ret.addElement (ELEMENT_CERTIFICATE).addText (aAccessPoint.getCertificate ());
+    return ret;
+  }
+
+  /**
+   * Get the text content of the provided child element.
+   *
+   * @param aElement
+   *        The parent element. May not be <code>null</code>.
+   * @param sChildElementName
+   *        The name of the child element to search. May not be <code>null</code>.
+   * @return <code>null</code> if no such child element is present.
+   */
+  @Nullable
+  public static String getChildText (@NonNull final IMicroElement aElement, @NonNull final String sChildElementName)
+  {
+    ValueEnforcer.notNull (aElement, "Element");
+
+    final IMicroElement aChild = aElement.getFirstChildElement (sChildElementName);
+    return aChild == null ? null : StringHelper.trim (aChild.getTextContentTrimmed ());
+  }
 
   /**
    * Check if the endpoint reference URL of the provided endpoint references an Access Point by

@@ -17,6 +17,7 @@
 package com.helger.phoss.smp.backend.mongodb.mgr;
 
 import org.bson.Document;
+import org.bson.conversions.Bson;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
@@ -28,12 +29,16 @@ import com.helger.base.state.EChange;
 import com.helger.base.string.StringHelper;
 import com.helger.collection.commons.CommonsArrayList;
 import com.helger.collection.commons.ICommonsList;
+import com.helger.collection.paging.IPagingSpec;
+import com.helger.phoss.smp.backend.mongodb.SMPMongoQueryHelper;
+import com.helger.phoss.smp.domain.accesspoint.ESMPAccessPointColumn;
 import com.helger.phoss.smp.domain.accesspoint.ISMPAccessPoint;
 import com.helger.phoss.smp.domain.accesspoint.ISMPAccessPointManager;
 import com.helger.phoss.smp.domain.accesspoint.SMPAccessPoint;
 import com.helger.phoss.smp.domain.accesspoint.SMPAccessPointHelper;
 import com.helger.photon.audit.AuditHelper;
 import com.mongodb.MongoWriteException;
+import com.mongodb.client.FindIterable;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.IndexOptions;
 import com.mongodb.client.model.Indexes;
@@ -49,6 +54,7 @@ import com.mongodb.client.result.UpdateResult;
 public final class SMPAccessPointManagerMongoDB extends AbstractManagerMongoDB implements ISMPAccessPointManager
 {
   private static final String BSON_ID = "id";
+  private static final ESMPAccessPointColumn [] COLUMNS = ESMPAccessPointColumn.values ();
   private static final String BSON_NAME = "name";
   private static final String BSON_NAME_LOOKUP_KEY = "namekey";
   private static final String BSON_ENDPOINT_REFERENCE = "endpointreference";
@@ -223,10 +229,39 @@ public final class SMPAccessPointManagerMongoDB extends AbstractManagerMongoDB i
     return ret;
   }
 
+  @NonNull
+  @ReturnsMutableCopy
+  @Override
+  public ICommonsList <ISMPAccessPoint> getAllAccessPoints (@NonNull final IPagingSpec aPagingSpec,
+                                                            @Nullable final String sSearchText)
+  {
+    final ICommonsList <ISMPAccessPoint> ret = new CommonsArrayList <> ();
+    if (aPagingSpec.isEmptyPage ())
+      return ret;
+
+    final Bson aFilter = SMPMongoQueryHelper.createSearchFilter (COLUMNS, sSearchText);
+    final FindIterable <Document> aCursor = aFilter == null ? getCollection ().find ()
+                                                            : getCollection ().find (aFilter);
+    aCursor.sort (SMPMongoQueryHelper.createSort (COLUMNS, aPagingSpec));
+    if (aPagingSpec.getStartIndex () > 0)
+      aCursor.skip ((int) Math.min (aPagingSpec.getStartIndex (), Integer.MAX_VALUE));
+    if (!aPagingSpec.isUnlimited ())
+      aCursor.limit ((int) Math.min (aPagingSpec.getMaxCount (), Integer.MAX_VALUE));
+    aCursor.forEach (x -> ret.add (toDomain (x)));
+    return ret;
+  }
+
   @Nonnegative
   public long getAccessPointCount ()
   {
     return getCollection ().countDocuments ();
+  }
+
+  @Override
+  public long getAccessPointCount (@Nullable final String sSearchText)
+  {
+    final Bson aFilter = SMPMongoQueryHelper.createSearchFilter (COLUMNS, sSearchText);
+    return aFilter == null ? getAccessPointCount () : getCollection ().countDocuments (aFilter);
   }
 
   @NonNull

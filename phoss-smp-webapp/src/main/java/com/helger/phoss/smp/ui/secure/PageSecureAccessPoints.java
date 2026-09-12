@@ -23,9 +23,9 @@ import java.util.Locale;
 import org.jspecify.annotations.NonNull;
 
 import com.helger.annotation.Nonempty;
-import com.helger.base.compare.ESortOrder;
 import com.helger.base.string.StringHelper;
 import com.helger.base.url.URLHelper;
+import com.helger.collection.commons.CommonsArrayList;
 import com.helger.collection.commons.ICommonsList;
 import com.helger.datetime.helper.PDTFactory;
 import com.helger.html.hc.IHCNode;
@@ -41,11 +41,15 @@ import com.helger.html.hc.impl.HCTextNode;
 import com.helger.peppol.ui.CertificateUI;
 import com.helger.phoss.smp.app.CSMP;
 import com.helger.phoss.smp.domain.SMPMetaManager;
+import com.helger.phoss.smp.domain.accesspoint.ESMPAccessPointColumn;
 import com.helger.phoss.smp.domain.accesspoint.ISMPAccessPoint;
 import com.helger.phoss.smp.domain.accesspoint.ISMPAccessPointManager;
 import com.helger.phoss.smp.domain.accesspoint.SMPAccessPointHelper;
 import com.helger.phoss.smp.domain.serviceinfo.ISMPServiceInformationManager;
 import com.helger.phoss.smp.ui.AbstractSMPWebPageForm;
+import com.helger.phoss.smp.ui.SMPCommonUI;
+import com.helger.phoss.smp.ui.ajax.CAjax;
+import com.helger.photon.ajax.decl.IAjaxFunctionDeclaration;
 import com.helger.photon.bootstrap5.button.BootstrapButton;
 import com.helger.photon.bootstrap5.buttongroup.BootstrapButtonToolbar;
 import com.helger.photon.bootstrap5.form.BootstrapForm;
@@ -55,6 +59,7 @@ import com.helger.photon.bootstrap5.pages.handler.AbstractBootstrapWebPageAction
 import com.helger.photon.bootstrap5.pages.handler.AbstractBootstrapWebPageActionHandlerDelete;
 import com.helger.photon.bootstrap5.uictrls.datatables.BootstrapDTColAction;
 import com.helger.photon.bootstrap5.uictrls.datatables.BootstrapDataTables;
+import com.helger.photon.core.execcontext.LayoutExecutionContext;
 import com.helger.photon.core.form.FormErrorList;
 import com.helger.photon.core.form.RequestField;
 import com.helger.photon.core.form.RequestFieldBoolean;
@@ -64,10 +69,14 @@ import com.helger.photon.uicore.page.EShowList;
 import com.helger.photon.uicore.page.EWebPageFormAction;
 import com.helger.photon.uicore.page.WebPageExecutionContext;
 import com.helger.photon.uictrls.datatables.DataTables;
+import com.helger.photon.uictrls.datatables.ajax.DataTablesOnDemandHelper;
+import com.helger.photon.uictrls.datatables.ajax.DataTablesOnDemandRequest;
+import com.helger.photon.uictrls.datatables.ajax.DataTablesOnDemandResult;
 import com.helger.photon.uictrls.datatables.column.DTCol;
 import com.helger.photon.uictrls.datatables.column.EDTColType;
 import com.helger.security.certificate.CertificateDecodeHelper;
 import com.helger.url.ISimpleURL;
+import com.helger.web.scope.IRequestWebScopeWithoutResponse;
 
 import jakarta.annotation.Nullable;
 
@@ -86,6 +95,13 @@ public final class PageSecureAccessPoints extends AbstractSMPWebPageForm <ISMPAc
   private static final String FIELD_REQUIRE_SAME_URL = "requiresameurl";
   private static final boolean DEFAULT_REQUIRE_SAME_URL = true;
   private static final String ACTION_USE_FOR_MATCHING = "use-for-matching";
+
+  /**
+   * Provides the rows of a single page - see
+   * {@link #_getOnDemandData(DataTablesOnDemandRequest, IRequestWebScopeWithoutResponse)}
+   */
+  private final IAjaxFunctionDeclaration m_aAjaxOnDemand = DataTablesOnDemandHelper.registerAjaxFunction (this::_getOnDemandData,
+                                                                                                          CAjax.FILTER_IS_USER_LOGGED_IN);
 
   public PageSecureAccessPoints (@NonNull @Nonempty final String sID)
   {
@@ -374,13 +390,82 @@ public final class PageSecureAccessPoints extends AbstractSMPWebPageForm <ISMPAc
     }
   }
 
+  private void _addRow (@NonNull final WebPageExecutionContext aWPEC,
+                        @NonNull final HCRow aRow,
+                        @NonNull final ISMPAccessPoint aCurObject)
+  {
+    final ISMPServiceInformationManager aServiceInfoMgr = SMPMetaManager.getServiceInformationMgr ();
+    final ISimpleURL aViewLink = createViewURL (aWPEC, aCurObject);
+
+    aRow.addCell (new HCA (aViewLink).addChild (aCurObject.getName ()));
+    aRow.addCell (aCurObject.getEndpointReference ());
+    aRow.addCell (Long.toString (aServiceInfoMgr.getEndpointCountUsingAccessPoint (aCurObject.getID ())));
+
+    final ISimpleURL aUseLink = aWPEC.getSelfHref ()
+                                     .add (CPageParam.PARAM_ACTION, ACTION_USE_FOR_MATCHING)
+                                     .add (CPageParam.PARAM_OBJECT, aCurObject.getID ());
+    aRow.addCell (createEditLink (aWPEC, aCurObject, "Edit " + aCurObject.getName ()),
+                  new HCTextNode (" "),
+                  createCopyLink (aWPEC, aCurObject, "Copy " + aCurObject.getName ()),
+                  new HCTextNode (" "),
+                  isActionAllowed (aWPEC, EWebPageFormAction.DELETE, aCurObject) ? createDeleteLink (aWPEC,
+                                                                                                     aCurObject,
+                                                                                                     "Delete " +
+                                                                                                                 aCurObject.getName ())
+                                                                                 : createEmptyAction (),
+                  new HCTextNode (" "),
+                  new HCA (aUseLink).setTitle ("Use this Access Point in all endpoints with the same certificate")
+                                    .addChild (EDefaultIcon.NEXT.getAsNode ()));
+  }
+
+  @NonNull
+  private HCTable _createTable (@NonNull final WebPageExecutionContext aWPEC)
+  {
+    final Locale aDisplayLocale = aWPEC.getDisplayLocale ();
+    // The column names are the IDs of ESMPAccessPointColumn, so that the sort order requested by
+    // the client can be resolved onto the respective SQL column or MongoDB field
+    return new HCTable (new DTCol ("Name").setName (ESMPAccessPointColumn.NAME.getID ()),
+                        new DTCol ("Endpoint Reference").setName (ESMPAccessPointColumn.ENDPOINT_REFERENCE.getID ()),
+                        new DTCol ("Endpoints").setDisplayType (EDTColType.INT, aDisplayLocale).setOrderable (false),
+                        new BootstrapDTColAction (aDisplayLocale).setOrderable (false)).setID (getID ());
+  }
+
+  /**
+   * Provide the rows of a single page - only the requested chunk of Access Points is loaded from
+   * the backend.
+   *
+   * @param aRequest
+   *        The DataTables request containing the paging specification and the search text.
+   * @param aRequestScope
+   *        The current request scope.
+   * @return The data of the requested page. Never <code>null</code>.
+   */
+  @NonNull
+  private DataTablesOnDemandResult _getOnDemandData (@NonNull final DataTablesOnDemandRequest aRequest,
+                                                     @NonNull final IRequestWebScopeWithoutResponse aRequestScope)
+  {
+    final WebPageExecutionContext aWPEC = new WebPageExecutionContext (LayoutExecutionContext.createForAjaxOrAction (aRequestScope),
+                                                                      this);
+    final ISMPAccessPointManager aAccessPointMgr = SMPMetaManager.getAccessPointMgr ();
+    final String sSearchText = aRequest.getSearchText ();
+
+    final ICommonsList <HCRow> aRows = new CommonsArrayList <> ();
+    for (final ISMPAccessPoint aCurObject : aAccessPointMgr.getAllAccessPoints (aRequest.getPagingSpec (),
+                                                                                sSearchText))
+    {
+      final HCRow aRow = new HCRow ();
+      _addRow (aWPEC, aRow, aCurObject);
+      aRows.add (aRow);
+    }
+    return new DataTablesOnDemandResult (aAccessPointMgr.getAccessPointCount (),
+                                         aAccessPointMgr.getAccessPointCount (sSearchText),
+                                         aRows);
+  }
+
   @Override
   protected void showListOfExistingObjects (@NonNull final WebPageExecutionContext aWPEC)
   {
-    final Locale aDisplayLocale = aWPEC.getDisplayLocale ();
     final HCNodeList aNodeList = aWPEC.getNodeList ();
-    final ISMPAccessPointManager aAccessPointMgr = SMPMetaManager.getAccessPointMgr ();
-    final ISMPServiceInformationManager aServiceInfoMgr = SMPMetaManager.getServiceInformationMgr ();
 
     aNodeList.addChild (info ().addChildren (div ("An Access Point is a named combination of an Endpoint Reference URL and a certificate."),
                                              div ("Referencing an Access Point from an endpoint is optional - an endpoint may also " +
@@ -392,39 +477,15 @@ public final class PageSecureAccessPoints extends AbstractSMPWebPageForm <ISMPAc
                                              .setIcon (EDefaultIcon.NEW));
     aNodeList.addChild (aToolbar);
 
-    final ICommonsList <ISMPAccessPoint> aList = aAccessPointMgr.getAllAccessPoints ();
-
-    final HCTable aTable = new HCTable (new DTCol ("Name").setInitialSorting (ESortOrder.ASCENDING),
-                                        new DTCol ("Endpoint Reference"),
-                                        new DTCol ("Endpoints").setDisplayType (EDTColType.INT, aDisplayLocale),
-                                        new BootstrapDTColAction (aDisplayLocale)).setID (getID ());
-    for (final ISMPAccessPoint aCurObject : aList)
-    {
-      final ISimpleURL aViewLink = createViewURL (aWPEC, aCurObject);
-
-      final HCRow aRow = aTable.addBodyRow ();
-      aRow.addCell (new HCA (aViewLink).addChild (aCurObject.getName ()));
-      aRow.addCell (aCurObject.getEndpointReference ());
-      aRow.addCell (Long.toString (aServiceInfoMgr.getEndpointCountUsingAccessPoint (aCurObject.getID ())));
-
-      final ISimpleURL aUseLink = aWPEC.getSelfHref ()
-                                       .add (CPageParam.PARAM_ACTION, ACTION_USE_FOR_MATCHING)
-                                       .add (CPageParam.PARAM_OBJECT, aCurObject.getID ());
-      aRow.addCell (createEditLink (aWPEC, aCurObject, "Edit " + aCurObject.getName ()),
-                    new HCTextNode (" "),
-                    createCopyLink (aWPEC, aCurObject, "Copy " + aCurObject.getName ()),
-                    new HCTextNode (" "),
-                    isActionAllowed (aWPEC, EWebPageFormAction.DELETE, aCurObject) ? createDeleteLink (aWPEC,
-                                                                                                       aCurObject,
-                                                                                                       "Delete " +
-                                                                                                                   aCurObject.getName ())
-                                                                                   : createEmptyAction (),
-                    new HCTextNode (" "),
-                    new HCA (aUseLink).setTitle ("Use this Access Point in all endpoints with the same certificate")
-                                      .addChild (EDefaultIcon.NEXT.getAsNode ()));
-    }
-
+    // Server side pagination - only a single page of Access Points is loaded at a time
+    final HCTable aTable = _createTable (aWPEC);
     final DataTables aDataTables = BootstrapDataTables.createDefaultDataTables (aWPEC, aTable);
+    DataTablesOnDemandHelper.applyOnDemandMode (aDataTables,
+                                                aTable,
+                                                m_aAjaxOnDemand,
+                                                aWPEC.getRequestScope (),
+                                                ESMPAccessPointColumn.values ());
+    aDataTables.setPageLength (SMPCommonUI.PAGE_SIZE);
     aNodeList.addChild (aTable).addChild (aDataTables);
   }
 }

@@ -10,6 +10,8 @@
  */
 package com.helger.phoss.smp.backend.xml.mgr;
 
+import java.util.function.Predicate;
+
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
@@ -22,12 +24,15 @@ import com.helger.base.string.StringHelper;
 import com.helger.collection.commons.CommonsHashMap;
 import com.helger.collection.commons.ICommonsList;
 import com.helger.collection.commons.ICommonsMap;
+import com.helger.collection.paging.IPagingSpec;
 import com.helger.dao.DAOException;
+import com.helger.phoss.smp.domain.accesspoint.ESMPAccessPointColumn;
 import com.helger.phoss.smp.domain.accesspoint.ISMPAccessPoint;
 import com.helger.phoss.smp.domain.accesspoint.ISMPAccessPointManager;
 import com.helger.phoss.smp.domain.accesspoint.SMPAccessPoint;
 import com.helger.phoss.smp.domain.accesspoint.SMPAccessPointHelper;
 import com.helger.photon.audit.AuditHelper;
+import com.helger.photon.core.paging.TableColumnHelper;
 import com.helger.photon.io.dao.AbstractPhotonMapBasedWALDAO;
 
 /**
@@ -40,6 +45,8 @@ public final class SMPAccessPointManagerXML extends AbstractPhotonMapBasedWALDAO
                                             implements
                                             ISMPAccessPointManager
 {
+  private static final ESMPAccessPointColumn [] COLUMNS = ESMPAccessPointColumn.values ();
+
   /** Name lookup key to ID. Only to be accessed inside the RW lock. */
   private final ICommonsMap <String, String> m_aNameIndex = new CommonsHashMap <> ();
 
@@ -195,10 +202,28 @@ public final class SMPAccessPointManagerXML extends AbstractPhotonMapBasedWALDAO
     return getAll ();
   }
 
+  @Override
+  @NonNull
+  @ReturnsMutableCopy
+  public ICommonsList <ISMPAccessPoint> getAllAccessPoints (@NonNull final IPagingSpec aPagingSpec,
+                                                            @Nullable final String sSearchText)
+  {
+    return getAllPaged (TableColumnHelper.getSearchPredicate (COLUMNS, sSearchText),
+                        aPagingSpec,
+                        TableColumnHelper.getComparator (COLUMNS, aPagingSpec));
+  }
+
   @Nonnegative
   public long getAccessPointCount ()
   {
     return size ();
+  }
+
+  @Override
+  public long getAccessPointCount (@Nullable final String sSearchText)
+  {
+    final Predicate <ISMPAccessPoint> aFilter = TableColumnHelper.getSearchPredicate (COLUMNS, sSearchText);
+    return aFilter == null ? getAccessPointCount () : getCount (aFilter);
   }
 
   @NonNull
