@@ -21,6 +21,7 @@ import java.util.function.Supplier;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
+import com.helger.annotation.Nonempty;
 import com.helger.annotation.Nonnegative;
 import com.helger.annotation.style.ReturnsMutableCopy;
 import com.helger.base.enforce.ValueEnforcer;
@@ -30,7 +31,6 @@ import com.helger.base.string.StringHelper;
 import com.helger.base.wrapper.Wrapper;
 import com.helger.collection.commons.CommonsArrayList;
 import com.helger.collection.commons.ICommonsList;
-import com.helger.collection.commons.ICommonsSet;
 import com.helger.db.api.helper.DBValueHelper;
 import com.helger.db.jdbc.callback.ConstantPreparedStatementDataProvider;
 import com.helger.db.jdbc.executor.DBExecutor;
@@ -40,6 +40,7 @@ import com.helger.phoss.smp.CSMPServer;
 import com.helger.phoss.smp.domain.accesspoint.ISMPAccessPoint;
 import com.helger.phoss.smp.domain.accesspoint.ISMPAccessPointManager;
 import com.helger.phoss.smp.domain.accesspoint.SMPAccessPoint;
+import com.helger.phoss.smp.domain.accesspoint.SMPAccessPointHelper;
 import com.helger.photon.audit.AuditHelper;
 
 /**
@@ -80,50 +81,32 @@ public final class SMPAccessPointManagerJDBC extends AbstractJDBCEnabledManager 
   @NonNull
   private static SMPAccessPoint _toDomain (@NonNull final DBResultRow aRow)
   {
-    return new SMPAccessPoint (aRow.getAsString (0), aRow.getAsString (1), aRow.getAsString (2));
+    return new SMPAccessPoint (aRow.getAsString (0), aRow.getAsString (1), aRow.getAsString (2), aRow.getAsString (3));
   }
 
   @Nullable
-  public ISMPAccessPoint findAccessPoint (@Nullable final String sEndpointReference)
+  public ISMPAccessPoint createAccessPoint (@NonNull @Nonempty final String sName,
+                                            @Nullable final String sEndpointReference,
+                                            @Nullable final String sCertificate)
   {
-    final Wrapper <DBResultRow> aDBResult = new Wrapper <> ();
-    if (sEndpointReference == null)
-      newExecutor ().querySingle ("SELECT id, endpointReference, certificate FROM " +
-                                  m_sTableName +
-                                  " WHERE endpointReference IS NULL", aDBResult::set);
-    else
-      newExecutor ().querySingle ("SELECT id, endpointReference, certificate FROM " +
-                                  m_sTableName +
-                                  " WHERE endpointReference=?",
-                                  new ConstantPreparedStatementDataProvider (sEndpointReference),
-                                  aDBResult::set);
-    return aDBResult.isSet () ? _toDomain (aDBResult.get ()) : null;
-  }
+    ValueEnforcer.notEmpty (sName, "Name");
 
-  @NonNull
-  public ISMPAccessPoint getOrCreateAccessPoint (@Nullable final String sEndpointReference,
-                                                 @Nullable final String sCertificate)
-  {
-    final ISMPAccessPoint aExisting = findAccessPoint (sEndpointReference);
-    if (aExisting != null)
+    if (getAccessPointOfName (sName) != null)
     {
-      // An Access Point can only have one certificate - the latest one wins
-      if (!aExisting.hasSameCertificate (sCertificate))
-      {
-        updateAccessPointCertificate (aExisting.getID (), sCertificate);
-        return new SMPAccessPoint (aExisting.getID (), sEndpointReference, sCertificate);
-      }
-      return aExisting;
+      AuditHelper.onAuditCreateFailure (SMPAccessPoint.OT, "name-already-in-use", sName);
+      return null;
     }
 
-    final SMPAccessPoint aNew = SMPAccessPoint.createDetached (sEndpointReference, sCertificate);
+    final SMPAccessPoint aNew = SMPAccessPoint.createWithNewID (sName, sEndpointReference, sCertificate);
     final DBExecutor aExecutor = newExecutor ();
     final ESuccess eSuccess = aExecutor.performInTransaction ( () -> {
       final long nCreated = aExecutor.insertOrUpdateOrDelete ("INSERT INTO " +
                                                               m_sTableName +
-                                                              " (id, endpointReference, certificate) VALUES (?, ?, ?)",
+                                                              " (id, name, endpointReference, certificate) VALUES (?, ?, ?, ?)",
                                                               new ConstantPreparedStatementDataProvider (DBValueHelper.getTrimmedToLength (aNew.getID (),
                                                                                                                                           CSMPServer.MAX_LEN_ID),
+                                                                                                         DBValueHelper.getTrimmedToLength (sName,
+                                                                                                                                           SMPAccessPointHelper.NAME_MAX_LENGTH),
                                                                                                          DBValueHelper.getTrimmedToLength (sEndpointReference,
                                                                                                                                            ENDPOINT_REFERENCE_MAX_LENGTH),
                                                                                                          sCertificate));
@@ -132,22 +115,75 @@ public final class SMPAccessPointManagerJDBC extends AbstractJDBCEnabledManager 
     });
     if (eSuccess.isFailure ())
     {
-      // The endpoint reference is unique, so a concurrent thread may have created the very same
-      // Access Point in the meantime
-      final ISMPAccessPoint aConcurrent = findAccessPoint (sEndpointReference);
-      if (aConcurrent != null)
-        return aConcurrent;
-      throw new IllegalStateException ("Failed to insert Access Point '" + aNew.getID () + "' into the database");
+      AuditHelper.onAuditCreateFailure (SMPAccessPoint.OT, "name-already-in-use", sName);
+      return null;
     }
 
-    AuditHelper.onAuditCreateSuccess (SMPAccessPoint.OT, aNew.getID (), sEndpointReference);
+    AuditHelper.onAuditCreateSuccess (SMPAccessPoint.OT, aNew.getID (), sName, sEndpointReference);
     return aNew;
+  }
+
+  @NonNull
+  public EChange updateAccessPoint (@Nullable final String sID,
+                                    @NonNull @Nonempty final String sName,
+                                    @Nullable final String sEndpointReference,
+                                    @Nullable final String sCertificate)
+  {
+    ValueEnforcer.notEmpty (sName, "Name");
+
+    if (StringHelper.isEmpty (sID))
+      return EChange.UNCHANGED;
+
+    final ISMPAccessPoint aExisting = getAccessPointOfID (sID);
+    if (aExisting == null)
+    {
+      AuditHelper.onAuditModifyFailure (SMPAccessPoint.OT, "set-all", sID, "no-such-id");
+      return EChange.UNCHANGED;
+    }
+
+    final ISMPAccessPoint aSameName = getAccessPointOfName (sName);
+    if (aSameName != null && !aSameName.getID ().equals (sID))
+    {
+      AuditHelper.onAuditModifyFailure (SMPAccessPoint.OT, "set-all", sID, "name-already-in-use", sName);
+      return EChange.UNCHANGED;
+    }
+
+    if (aExisting.hasSameName (sName) &&
+        aExisting.hasSameEndpointReference (sEndpointReference) &&
+        aExisting.hasSameCertificate (sCertificate))
+      return EChange.UNCHANGED;
+
+    final long nUpdated = newExecutor ().insertOrUpdateOrDelete ("UPDATE " +
+                                                                 m_sTableName +
+                                                                 " SET name=?, endpointReference=?, certificate=? WHERE id=?",
+                                                                 new ConstantPreparedStatementDataProvider (DBValueHelper.getTrimmedToLength (sName,
+                                                                                                                                              SMPAccessPointHelper.NAME_MAX_LENGTH),
+                                                                                                            DBValueHelper.getTrimmedToLength (sEndpointReference,
+                                                                                                                                              ENDPOINT_REFERENCE_MAX_LENGTH),
+                                                                                                            sCertificate,
+                                                                                                            sID));
+    if (nUpdated <= 0)
+    {
+      AuditHelper.onAuditModifyFailure (SMPAccessPoint.OT, "set-all", sID, "no-such-id");
+      return EChange.UNCHANGED;
+    }
+    AuditHelper.onAuditModifySuccess (SMPAccessPoint.OT, "set-all", sID, sName, sEndpointReference);
+    return EChange.CHANGED;
   }
 
   @NonNull
   public EChange updateAccessPointCertificate (@Nullable final String sID, @Nullable final String sNewCertificate)
   {
     if (StringHelper.isEmpty (sID))
+      return EChange.UNCHANGED;
+
+    final ISMPAccessPoint aExisting = getAccessPointOfID (sID);
+    if (aExisting == null)
+    {
+      AuditHelper.onAuditModifyFailure (SMPAccessPoint.OT, "set-certificate", sID, "no-such-id");
+      return EChange.UNCHANGED;
+    }
+    if (aExisting.hasSameCertificate (sNewCertificate))
       return EChange.UNCHANGED;
 
     final long nUpdated = newExecutor ().insertOrUpdateOrDelete ("UPDATE " +
@@ -164,28 +200,6 @@ public final class SMPAccessPointManagerJDBC extends AbstractJDBCEnabledManager 
     return EChange.CHANGED;
   }
 
-  @NonNull
-  public EChange updateAccessPointEndpointReference (@Nullable final String sID,
-                                                     @Nullable final String sNewEndpointReference)
-  {
-    if (StringHelper.isEmpty (sID))
-      return EChange.UNCHANGED;
-
-    final long nUpdated = newExecutor ().insertOrUpdateOrDelete ("UPDATE " +
-                                                                 m_sTableName +
-                                                                 " SET endpointReference=? WHERE id=?",
-                                                                 new ConstantPreparedStatementDataProvider (DBValueHelper.getTrimmedToLength (sNewEndpointReference,
-                                                                                                                                              ENDPOINT_REFERENCE_MAX_LENGTH),
-                                                                                                            sID));
-    if (nUpdated <= 0)
-    {
-      AuditHelper.onAuditModifyFailure (SMPAccessPoint.OT, "set-endpoint-reference", sID, "no-such-id");
-      return EChange.UNCHANGED;
-    }
-    AuditHelper.onAuditModifySuccess (SMPAccessPoint.OT, "set-endpoint-reference", sID, sNewEndpointReference);
-    return EChange.CHANGED;
-  }
-
   @Nullable
   public ISMPAccessPoint getAccessPointOfID (@Nullable final String sID)
   {
@@ -193,8 +207,22 @@ public final class SMPAccessPointManagerJDBC extends AbstractJDBCEnabledManager 
       return null;
 
     final Wrapper <DBResultRow> aDBResult = new Wrapper <> ();
-    newExecutor ().querySingle ("SELECT id, endpointReference, certificate FROM " + m_sTableName + " WHERE id=?",
+    newExecutor ().querySingle ("SELECT id, name, endpointReference, certificate FROM " + m_sTableName + " WHERE id=?",
                                 new ConstantPreparedStatementDataProvider (sID),
+                                aDBResult::set);
+    return aDBResult.isSet () ? _toDomain (aDBResult.get ()) : null;
+  }
+
+  @Nullable
+  public ISMPAccessPoint getAccessPointOfName (@Nullable final String sName)
+  {
+    final String sLookupKey = SMPAccessPointHelper.createNameLookupKey (sName);
+    if (sLookupKey.isEmpty ())
+      return null;
+
+    final Wrapper <DBResultRow> aDBResult = new Wrapper <> ();
+    newExecutor ().querySingle ("SELECT id, name, endpointReference, certificate FROM " + m_sTableName + " WHERE LOWER(name)=?",
+                                new ConstantPreparedStatementDataProvider (sLookupKey),
                                 aDBResult::set);
     return aDBResult.isSet () ? _toDomain (aDBResult.get ()) : null;
   }
@@ -204,7 +232,7 @@ public final class SMPAccessPointManagerJDBC extends AbstractJDBCEnabledManager 
   public ICommonsList <ISMPAccessPoint> getAllAccessPoints ()
   {
     final ICommonsList <ISMPAccessPoint> ret = new CommonsArrayList <> ();
-    final ICommonsList <DBResultRow> aDBResult = newExecutor ().queryAll ("SELECT id, endpointReference, certificate FROM " +
+    final ICommonsList <DBResultRow> aDBResult = newExecutor ().queryAll ("SELECT id, name, endpointReference, certificate FROM " +
                                                                           m_sTableName);
     if (aDBResult != null)
       for (final DBResultRow aRow : aDBResult)
@@ -233,18 +261,5 @@ public final class SMPAccessPointManagerJDBC extends AbstractJDBCEnabledManager 
     }
     AuditHelper.onAuditDeleteSuccess (SMPAccessPoint.OT, sID);
     return EChange.CHANGED;
-  }
-
-  @Nonnegative
-  public long deleteAllUnusedAccessPoints (@NonNull final ICommonsSet <String> aUsedIDs)
-  {
-    ValueEnforcer.notNull (aUsedIDs, "UsedIDs");
-
-    long nDeleted = 0;
-    for (final ISMPAccessPoint aAP : getAllAccessPoints ())
-      if (!aUsedIDs.contains (aAP.getID ()))
-        if (deleteAccessPoint (aAP.getID ()).isChanged ())
-          nDeleted++;
-    return nDeleted;
   }
 }
